@@ -2,7 +2,7 @@
 __notion-caldav__ connects notion databases with caldav calendars, and synchronizes tasks between them
 
 # config.yaml schema
-```
+```yaml
 notion:
   key: <your secret notion API key>
 
