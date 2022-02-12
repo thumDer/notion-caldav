@@ -1,7 +1,7 @@
 import sys
 import logging
 from os import path
-from datetime import datetime
+from datetime import datetime, date
 import pytz
 import yaml
 import requests
@@ -49,6 +49,8 @@ class Task(object):
                 }
             )
             self.notion_id = page.get('id')
+        self.timestamp = \
+            utc_from_notion_stamp(page.get('last_edited_time')).isoformat()
         return page
 
 
@@ -83,6 +85,33 @@ def query_notion_db(client):
         }
     ).get('results')
 
+def do_date_from_notion(prop_obj):
+    date_obj = prop_obj.get('date')
+    if not date_obj:
+        return
+    end = date_obj.get('end')
+    if end:
+        due_str = end
+    else:
+        due_str = date_obj.get('start')
+    try:
+        due = date.fromisoformat(due_str)
+    except:
+        due = datetime.fromisoformat(due_str)
+    return due
+
+
+def utc_from_notion_stamp(time):
+    return pytz.utc.localize(datetime.strptime(
+        time,
+        '%Y-%m-%dT%H:%M:%S.%fZ')
+    )
+
+def localize_iso_utc(time):
+    local_dt = utc_from_notion_stamp(time).replace(tzinfo=pytz.utc).astimezone(
+        pytz.timezone(CONFIG.get('timezone'))
+    )
+    return local_dt
 
 def stamp():
     return(datetime.now(pytz.timezone(CONFIG.get('timezone'))))
@@ -105,12 +134,6 @@ def main():
     # setup connections
     notion = get_notion_client(log_level=log_level)
 
-    # region Test
-    items = query_notion_db(notion)
-    task = Task('Teszt task 10', None)
-    task.notion_id = items[-1].get('id')
-    task.to_notion(notion)
-    # endregion
 
 if __name__ == '__main__':
     main()
