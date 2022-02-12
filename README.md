@@ -20,6 +20,5 @@ caldav:
   user: <caldav user>
   password: <caldav password>
 
-timezone: <timezone>
 logger: INFO
 ```
