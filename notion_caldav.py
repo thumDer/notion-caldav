@@ -1,4 +1,5 @@
 import sys
+import asyncio
 import logging
 from os import path
 from datetime import datetime, date
@@ -10,13 +11,20 @@ from notion_client import AsyncClient
 # read config
 CONFIG_PATH = './config.yaml'
 CACHE_PATH = './data/cache.json'
-if path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r") as f:
-        CONFIG = yaml.safe_load(f)
-        NOTION_KEY = CONFIG.get('notion').get('key')
-        DB_ID = CONFIG.get('notion').get('database_id')
-else:
-    print('config.yaml not found, check the docs')
+try:
+    if path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r") as f:
+            CONFIG = yaml.safe_load(f)
+            try:
+                NOTION_KEY = CONFIG.get('notion').get('key')
+                DB_ID = CONFIG.get('notion').get('database_id')
+                FILTER = CONFIG.get('notion').get('filter')
+            except:
+                raise ValueError('Invalid config file, check the docs!')
+    else:
+        raise ValueError('config.yaml not found, check the docs!')
+except ValueError as e:
+    print(e)
     sys.exit()
 
 
@@ -26,17 +34,17 @@ class Task(object):
         name,
         source,
         start=None,
-        end=None,
+        due=None,
         priority=None,
         timestamp=None,
         notion_id=None,
         caldav_uid=None,
-        from_cache=False
+        cached=False
     ) -> None:
         self.name = name
         self.source = source
         self.start = start
-        self.end = end
+        self.due = due
         self.priority = priority
         self.notion_id = None
         if timestamp:
@@ -45,7 +53,7 @@ class Task(object):
             self.timestamp = datetime.now(pytz.utc).isoformat()
         self.notion_id = notion_id
         self.caldav_uid = caldav_uid
-        self.from_cache = from_cache
+        self.cached = cached
     
     @staticmethod
     def from_notion(page):
@@ -56,9 +64,8 @@ class Task(object):
     def update_with_notion(self, page):
         self.name = page.get('properties').get('Name').get('title')[0].get('text').get('content')
         self.source = 'notion'
-        date_obj = page.get('properties').get(CONFIG.get('notion').get('date_property'))
-        self.start = due_from_notion(date_obj, get_start=True)
-        self.end = due_from_notion(date_obj)
+        date_obj = page.get('properties').get(CONFIG.get('notion').get('date_property')).get('date')
+        self.start, self.due = date_mapping(date_obj)
         self.notion_id = page.get('id')
         self.timestamp = normalize_notion_timestamp(page.get('last_edited_time'))
 
@@ -87,25 +94,11 @@ class Task(object):
 
         self.timestamp = \
             normalize_notion_timestamp(page.get('last_edited_time'))
-        # self.timestamp = datetime.isoformat(datetime.now(pytz.utc))
         logging.debug(f'Updated timestamp {self.timestamp}')
         return page
 
 
     def notion_properties(self):
-        if self.start:
-            start = self.start
-            end = self.end
-        else:
-            start = self.end
-            end = None
-        if start or end:
-            date_obj = {
-                'start': start,
-                'end': end
-                }
-        else:
-            date_obj = None
         return { 
             'Name': {
                 'title': [
@@ -117,7 +110,7 @@ class Task(object):
                 ]
             },
             CONFIG.get('notion').get('date_property'): {
-                'date': date_obj
+                'date': date_mapping((self.start, self.due))
             }
         }
     
@@ -134,7 +127,17 @@ def get_notion_client(log_level=logging.WARNING):
 
 
 async def query_notion_db(client):
-    query_filter = CONFIG.get('notion').get('filter')
+    logging.debug(f'Config filter: {FILTER}')
+    if isinstance(FILTER, dict) or FILTER is None:
+        query_filter = FILTER
+    else:
+        query_filter = {
+            'property': FILTER,
+            'checkbox': {
+                'equals': True
+            }
+        }
+    logging.debug(f'Query filter: {query_filter}')
     result = await client.databases.query(
         **{
             'database_id': DB_ID,
@@ -144,29 +147,46 @@ async def query_notion_db(client):
     return result.get('results')
 
 
-def due_from_notion(prop_obj, get_start=False):
-    date_obj = prop_obj.get('date')
-    if not date_obj:
-        return
-    start_str = date_obj.get('start')
-    end_str = date_obj.get('end')
-    if not end_str:
-        end_str = start_str
-        start_str = None
-    
-    if get_start:
-        due_str = start_str
-    else:
-        due_str = end_str
-    
-    if due_str is None:
-        return
+def date_mapping(value):
+    def fromiso(string):
+        if string is None:
+            return None
+        try:
+            result = date.fromisoformat(string)
+        except:
+            result = datetime.fromisoformat(string)
+        return result.isoformat()
 
-    try:
-        due = date.fromisoformat(due_str)
-    except:
-        due = datetime.fromisoformat(due_str)
-    return due.isoformat()
+
+    if isinstance(value, tuple):
+        if value == (None, None):
+            return None
+
+        if value[0] is None:
+            start = value[1]
+            end = None
+        else:
+            start = value[0]
+            end = value[1]
+
+        return {
+            'start': start,
+            'end': end
+        }
+    elif isinstance(value, dict):
+        n_start = value.get('start')
+        n_end = value.get('end')
+        if not n_end:
+            start = None
+            due = n_start
+        else:
+            start = n_start
+            due = n_end
+        return (fromiso(start), fromiso(due))
+    elif value is None:
+        return (None, None)
+    else:
+        raise ValueError('Unexpected value type')
 
 
 def utc_from_notion_stamp(time):
@@ -178,13 +198,6 @@ def utc_from_notion_stamp(time):
 
 def normalize_notion_timestamp(time_str):
     return utc_from_notion_stamp(time_str).isoformat()
-
-
-# def localize_iso_utc(time):
-#     local_dt = utc_from_notion_stamp(time).replace(tzinfo=pytz.utc).astimezone(
-#         pytz.timezone(CONFIG.get('timezone'))
-#     )
-#     return local_dt
 
 
 def load_cache(cache_path=CACHE_PATH):
@@ -201,14 +214,14 @@ def load_cache(cache_path=CACHE_PATH):
 
 def dump_cache(tasks, cache_path=CACHE_PATH):
     for t in tasks:
-        t.from_cache = True
+        t.cached = True
     data = [t.__dict__ for t in tasks]
     with open(cache_path, 'w', encoding='utf-8') as create_file:
         json.dump(data, create_file, ensure_ascii=False, indent=4)
     logging.info(f'Saved {len(data)} items to cache...')
     
 
-def main():
+async def main():
     # setup logger
     root_logger = logging.getLogger()
     log_level = logging.getLevelName(CONFIG.get('logger'))
@@ -227,6 +240,6 @@ def main():
 if __name__ == '__main__':
 
     try:
-        main()
+        asyncio.run(main())
     except Exception:
         logging.exception('Unhandled Exception', exc_info=1)

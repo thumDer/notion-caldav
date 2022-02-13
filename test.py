@@ -15,6 +15,10 @@ tasks = load_cache()
 notion = get_notion_client(log_level=logging.INFO)
 async def main():
     pages = await query_notion_db(notion)
+
+    # for p in pages:
+    #     print(p.get('properties').get('Do Date'))
+
     logging.info(f'Loaded {len(pages)} tasks from notion...')
 
     for page in pages:
@@ -42,7 +46,7 @@ async def main():
         if todo:
             logging.debug(f'{task} found on caldav')
         if (
-                task.from_cache and
+                task.cached and
                 task.source != 'notion' and 
                 (not page or
                 datetime.fromisoformat(
@@ -59,7 +63,7 @@ async def main():
         #         todo
         # ):
         #     pass
-        elif task.from_cache and (not page): # or not todo:
+        elif task.cached and (not page): # or not todo:
             logging.debug(f'{task} is deleted, cleaning up')
             # delete remotes
             pass
