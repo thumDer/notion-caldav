@@ -1,3 +1,4 @@
+# ‼‼ EXPLICITLY WIP = not useable yet 👷‍♂️
 # What is this?
 __notion-caldav__ connects notion databases with caldav calendars, and synchronizes tasks between them
 
