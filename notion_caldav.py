@@ -46,7 +46,6 @@ class Task(object):
         self.start = start
         self.due = due
         self.priority = priority
-        self.notion_id = None
         if timestamp:
             self.timestamp = timestamp
         else:
@@ -66,8 +65,8 @@ class Task(object):
         self.source = 'notion'
         date_obj = page.get('properties').get(CONFIG.get('notion').get('date_property')).get('date')
         self.start, self.due = date_mapping(date_obj)
-        self.notion_id = page.get('id')
         self.timestamp = normalize_notion_timestamp(page.get('last_edited_time'))
+        self.notion_id = page.get('id')
 
 
     async def to_notion(self, client):
@@ -148,16 +147,6 @@ async def query_notion_db(client):
 
 
 def date_mapping(value):
-    def fromiso(string):
-        if string is None:
-            return None
-        try:
-            result = date.fromisoformat(string)
-        except:
-            result = datetime.fromisoformat(string)
-        return result.isoformat()
-
-
     if isinstance(value, tuple):
         if value == (None, None):
             return None
@@ -182,7 +171,7 @@ def date_mapping(value):
         else:
             start = n_start
             due = n_end
-        return (fromiso(start), fromiso(due))
+        return (start, due)
     elif value is None:
         return (None, None)
     else:
